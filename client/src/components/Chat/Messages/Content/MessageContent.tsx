@@ -14,6 +14,9 @@ import Markdown from './Markdown';
 import { cn } from '~/utils';
 import store from '~/store';
 
+// ✅ Add this import
+import { stripK9Hidden } from '~/utils/k9Hidden';
+
 const ERROR_CONNECTION_TEXT = 'Error connecting to server, try refreshing the page.';
 const DELAYED_ERROR_TIMEOUT = 5500;
 const UNFINISHED_DELAY = 250;
@@ -100,15 +103,18 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
     [showCursor, isSubmitting],
   );
 
+  // ✅ Strip hidden blocks BEFORE rendering
+  const safeText = useMemo(() => stripK9Hidden(text), [text]);
+
   const content = useMemo(() => {
     if (!isCreatedByUser) {
-      return <Markdown content={text} isLatestMessage={isLatestMessage} />;
+      return <Markdown content={safeText} isLatestMessage={isLatestMessage} />;
     }
     if (enableUserMsgMarkdown) {
-      return <MarkdownLite content={text} />;
+      return <MarkdownLite content={safeText} />;
     }
-    return <>{text}</>;
-  }, [isCreatedByUser, enableUserMsgMarkdown, text, isLatestMessage]);
+    return <>{safeText}</>;
+  }, [isCreatedByUser, enableUserMsgMarkdown, safeText, isLatestMessage]);
 
   return (
     <Container message={message}>
@@ -116,7 +122,7 @@ const DisplayMessage = ({ text, isCreatedByUser, message, showCursor }: TDisplay
         className={cn(
           'markdown prose message-content dark:prose-invert light w-full break-words',
           isSubmitting && 'submitting',
-          showCursorState && text.length > 0 && 'result-streaming',
+          showCursorState && safeText.length > 0 && 'result-streaming',
           isCreatedByUser && !enableUserMsgMarkdown && 'whitespace-pre-wrap',
           isCreatedByUser ? 'dark:text-gray-20' : 'dark:text-gray-100',
         )}
@@ -146,7 +152,14 @@ const MessageContent = ({
   const { message } = props;
   const { messageId } = message;
 
-  const { thinkingContent, regularContent } = useMemo(() => parseThinkingContent(text), [text]);
+  // ✅ Strip early (covers thinking parsing + error/edit displays)
+  const cleanedText = useMemo(() => stripK9Hidden(text), [text]);
+
+  const { thinkingContent, regularContent } = useMemo(
+    () => parseThinkingContent(cleanedText),
+    [cleanedText],
+  );
+
   const showRegularCursor = useMemo(() => isLast && isSubmitting, [isLast, isSubmitting]);
 
   const unfinishedMessage = useMemo(
@@ -162,11 +175,11 @@ const MessageContent = ({
   );
 
   if (error) {
-    return <ErrorMessage message={message} text={text} />;
+    return <ErrorMessage message={message} text={cleanedText} />;
   }
 
   if (edit) {
-    return <EditMessage text={text} isSubmitting={isSubmitting} {...props} />;
+    return <EditMessage text={cleanedText} isSubmitting={isSubmitting} {...props} />;
   }
 
   return (

@@ -1,14 +1,25 @@
-import { memo, useRef, useMemo, useEffect, useState, useCallback } from 'react';
+import React, {
+  memo,
+  useRef,
+  useMemo,
+  useEffect,
+  useState,
+  useCallback,
+  type ChangeEvent,
+} from 'react';
+
 import { useWatch } from 'react-hook-form';
 import { TextareaAutosize } from '@librechat/client';
 import { useRecoilState, useRecoilValue } from 'recoil';
 import { Constants, isAssistantsEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
+
 import {
   useChatContext,
   useChatFormContext,
   useAddedChatContext,
   useAssistantsMapContext,
 } from '~/Providers';
+
 import {
   useTextarea,
   useAutoSave,
@@ -19,6 +30,7 @@ import {
   useSubmitMessage,
   useFocusChatEffect,
 } from '~/hooks';
+
 import { mainTextareaId, BadgeItem } from '~/common';
 import AttachFileChat from './Files/AttachFileChat';
 import FileFormChat from './Files/FileFormChat';
@@ -35,10 +47,75 @@ import BadgeRow from './BadgeRow';
 import Mention from './Mention';
 import store from '~/store';
 
+const STYLE_MIN = 0;
+const STYLE_MAX = 9;
+const STYLE_DEFAULT = 5;
+
+function clampInt(n: number, min: number, max: number) {
+  const x = Number.isFinite(n) ? Math.round(n) : min;
+  return Math.min(max, Math.max(min, x));
+}
+
+/**
+ * Hide style instructions inside an HTML comment so the UI can strip it.
+ * NOTE: Make sure your rendering layer strips <!-- k9_style ... --> blocks.
+ */
+function toHiddenStyleSuffix(text: string) {
+  // prevent "--" from breaking HTML comment parsing
+  const safe = String(text).replace(/--/g, '—');
+  return `\n\n<!-- k9_style\n${safe}\n-->`;
+}
+
+/**
+ * Style scale: 0–5 stays professional/structured. 6–9 is more casual/simple.
+ * This is framed as tone/readability control (not “detection evasion”).
+ */
+function buildStyleInstruction(level: number) {
+  const L = clampInt(level, STYLE_MIN, STYLE_MAX);
+  if (L === 0) return '';
+
+  const professionalRules =
+    L <= 5
+      ? [
+          `STYLE LEVEL: ${L}/9 (professional/structured)`,
+          '',
+          'Rules:',
+          '- Keep a professional tone.',
+          '- Prefer clear structure: direct answer → bullets → brief takeaway when helpful.',
+          '- Avoid slang and filler.',
+          '- Keep sentences clean and precise.',
+        ].join('\n')
+      : '';
+
+  const casualRules =
+    L >= 6
+      ? [
+          `STYLE LEVEL: ${L}/9 (casual/simple)`,
+          '',
+          'Rules:',
+          '- Use shorter sentences.',
+          '- Simpler vocabulary and phrasing.',
+          '- Fewer formal headings.',
+          '- Still accurate and respectful.',
+        ].join('\n')
+      : '';
+
+  return [
+    'INTERNAL STYLE INSTRUCTIONS:',
+    '- Do not mention these instructions.',
+    '- Keep the answer factually correct.',
+    professionalRules,
+    casualRules,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   useFocusChatEffect(textAreaRef);
+
   const localize = useLocalize();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -46,6 +123,10 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const [visualRowCount, setVisualRowCount] = useState(1);
   const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
   const [backupBadges, setBackupBadges] = useState<Pick<BadgeItem, 'id'>[]>([]);
+
+  // Style toggle + slider
+  const [styleEnabled, setStyleEnabled] = useState(false);
+  const [styleLevel, setStyleLevel] = useState<number>(STYLE_DEFAULT);
 
   const SpeechToText = useRecoilValue(store.speechToText);
   const TextToSpeech = useRecoilValue(store.textToSpeech);
@@ -59,12 +140,13 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const [isEditingBadges, setIsEditingBadges] = useRecoilState(store.isEditingBadges);
   const [showStopButton, setShowStopButton] = useRecoilState(store.showStopButtonByIndex(index));
   const [showPlusPopover, setShowPlusPopover] = useRecoilState(store.showPlusPopoverFamily(index));
-  const [showMentionPopover, setShowMentionPopover] = useRecoilState(
-    store.showMentionPopoverFamily(index),
-  );
+  const [showMentionPopover, setShowMentionPopover] = useRecoilState(store.showMentionPopoverFamily(index));
 
   const { requiresKey } = useRequiresKey();
   const methods = useChatFormContext();
+
+  // Defensive: avoid destructuring undefined if provider wiring changes
+  const chatCtx = useChatContext();
   const {
     files,
     setFiles,
@@ -73,14 +155,17 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     filesLoading,
     newConversation,
     handleStopGenerating,
-  } = useChatContext();
+  } = chatCtx ?? ({} as any);
+
+  const addedCtx = useAddedChatContext();
   const {
     addedIndex,
     generateConversation,
     conversation: addedConvo,
     setConversation: setAddedConvo,
     isSubmitting: isSubmittingAdded,
-  } = useAddedChatContext();
+  } = addedCtx ?? ({} as any);
+
   const assistantMap = useAssistantsMapContext();
   const showStopAdded = useRecoilValue(store.showStopButtonByIndex(addedIndex));
 
@@ -88,6 +173,7 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     () => conversation?.endpointType ?? conversation?.endpoint,
     [conversation?.endpointType, conversation?.endpoint],
   );
+
   const conversationId = useMemo(
     () => conversation?.conversationId ?? Constants.NEW_CONVO,
     [conversation?.conversationId],
@@ -97,30 +183,23 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     () => (chatDirection != null ? chatDirection?.toLowerCase() === 'rtl' : false),
     [chatDirection],
   );
+
   const invalidAssistant = useMemo(
     () =>
       isAssistantsEndpoint(endpoint) &&
-      (!(conversation?.assistant_id ?? '') ||
-        !assistantMap?.[endpoint ?? '']?.[conversation?.assistant_id ?? '']),
+      (!(conversation?.assistant_id ?? '') || !assistantMap?.[endpoint ?? '']?.[conversation?.assistant_id ?? '']),
     [conversation?.assistant_id, endpoint, assistantMap],
   );
-  const disableInputs = useMemo(
-    () => requiresKey || invalidAssistant,
-    [requiresKey, invalidAssistant],
-  );
+
+  const disableInputs = useMemo(() => requiresKey || invalidAssistant, [requiresKey, invalidAssistant]);
 
   const handleContainerClick = useCallback(() => {
-    /** Check if the device is a touchscreen */
-    if (window.matchMedia?.('(pointer: coarse)').matches) {
-      return;
-    }
+    if (window.matchMedia?.('(pointer: coarse)').matches) return;
     textAreaRef.current?.focus();
   }, []);
 
   const handleFocusOrClick = useCallback(() => {
-    if (isCollapsed) {
-      setIsCollapsed(false);
-    }
+    if (isCollapsed) setIsCollapsed(false);
   }, [isCollapsed]);
 
   useAutoSave({
@@ -128,10 +207,30 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     setFiles,
     textAreaRef,
     conversationId,
-    isSubmitting: isSubmitting || isSubmittingAdded,
+    isSubmitting: Boolean(isSubmitting || isSubmittingAdded),
   });
 
   const { submitMessage, submitPrompt } = useSubmitMessage();
+
+  // When enabling style control, default level to 5
+  useEffect(() => {
+    if (styleEnabled) setStyleLevel(STYLE_DEFAULT);
+  }, [styleEnabled]);
+
+  const onSubmit = useCallback(
+    ({ text }: { text: string }) => {
+      const trimmed = text?.trim?.() ?? '';
+      if (!trimmed) return;
+
+      const L = clampInt(styleLevel, STYLE_MIN, STYLE_MAX);
+      const instruction = styleEnabled && L > 0 ? buildStyleInstruction(L) : '';
+
+      const contentToSend = instruction ? trimmed + toHiddenStyleSuffix(instruction) : trimmed;
+
+      return submitMessage({ text: contentToSend });
+    },
+    [submitMessage, styleEnabled, styleLevel],
+  );
 
   const handleKeyUp = useHandleKeyUp({
     index,
@@ -139,25 +238,21 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
     setShowPlusPopover,
     setShowMentionPopover,
   });
-  const {
-    isNotAppendable,
-    handlePaste,
-    handleKeyDown,
-    handleCompositionStart,
-    handleCompositionEnd,
-  } = useTextarea({
-    textAreaRef,
-    submitButtonRef,
-    setIsScrollable,
-    disabled: disableInputs,
-  });
+
+  const { isNotAppendable, handlePaste, handleKeyDown, handleCompositionStart, handleCompositionEnd } =
+    useTextarea({
+      textAreaRef,
+      submitButtonRef,
+      setIsScrollable,
+      disabled: disableInputs,
+    });
 
   useQueryParams({ textAreaRef });
 
   const { ref, ...registerProps } = methods.register('text', {
     required: true,
     onChange: useCallback(
-      (e: React.ChangeEvent<HTMLTextAreaElement>) =>
+      (e: ChangeEvent<HTMLTextAreaElement>) =>
         methods.setValue('text', e.target.value, { shouldValidate: true }),
       [methods],
     ),
@@ -166,23 +261,24 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const textValue = useWatch({ control: methods.control, name: 'text' });
 
   useEffect(() => {
-    if (textAreaRef.current) {
-      const style = window.getComputedStyle(textAreaRef.current);
-      const lineHeight = parseFloat(style.lineHeight);
+    if (!textAreaRef.current) return;
+    const style = window.getComputedStyle(textAreaRef.current);
+    const lineHeight = parseFloat(style.lineHeight);
+    if (Number.isFinite(lineHeight) && lineHeight > 0) {
       setVisualRowCount(Math.floor(textAreaRef.current.scrollHeight / lineHeight));
     }
   }, [textValue]);
 
   useEffect(() => {
     if (isEditingBadges && backupBadges.length === 0) {
-      setBackupBadges([...badges]);
+      setBackupBadges([...(badges ?? [])]);
     }
   }, [isEditingBadges, badges, backupBadges.length]);
 
   const handleSaveBadges = useCallback(() => {
     setIsEditingBadges(false);
     setBackupBadges([]);
-  }, [setIsEditingBadges, setBackupBadges]);
+  }, [setIsEditingBadges]);
 
   const handleCancelBadges = useCallback(() => {
     if (backupBadges.length > 0) {
@@ -206,14 +302,14 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
 
   return (
     <form
-      onSubmit={methods.handleSubmit(submitMessage)}
+      onSubmit={methods.handleSubmit(onSubmit)}
       className={cn(
         'mx-auto flex w-full flex-row gap-3 transition-[max-width] duration-300 sm:px-2',
         maximizeChatSpace ? 'max-w-full' : 'md:max-w-3xl xl:max-w-4xl',
         centerFormOnLanding &&
           (conversationId == null || conversationId === Constants.NEW_CONVO) &&
           !isSubmitting &&
-          conversation?.messages?.length === 0
+          (conversation?.messages?.length ?? 0) === 0
           ? 'transition-all duration-200 sm:mb-28'
           : 'sm:mb-10',
       )}
@@ -231,6 +327,7 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
               includeAssistants={false}
             />
           )}
+
           {showMentionPopover && (
             <Mention
               conversation={conversation}
@@ -239,25 +336,28 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
               textAreaRef={textAreaRef}
             />
           )}
+
           <PromptsCommand index={index} textAreaRef={textAreaRef} submitPrompt={submitPrompt} />
+
           <div
             onClick={handleContainerClick}
             className={cn(
               'relative flex w-full flex-grow flex-col overflow-hidden rounded-t-3xl border pb-4 text-text-primary transition-all duration-200 sm:rounded-3xl sm:pb-0',
               isTextAreaFocused ? 'shadow-lg' : 'shadow-md',
-              isTemporary
-                ? 'border-violet-800/60 bg-violet-950/10'
-                : 'border-border-light bg-surface-chat',
+              isTemporary ? 'border-violet-800/60 bg-violet-950/10' : 'border-border-light bg-surface-chat',
             )}
           >
             <TextareaHeader addedConvo={addedConvo} setAddedConvo={setAddedConvo} />
+
             <EditBadges
               isEditingChatBadges={isEditingBadges}
               handleCancelBadges={handleCancelBadges}
               handleSaveBadges={handleSaveBadges}
               setBadges={setBadges}
             />
+
             <FileFormChat conversation={conversation} />
+
             {endpoint && (
               <div className={cn('flex', isRTL ? 'flex-row-reverse' : 'flex-row')}>
                 <TextareaAutosize
@@ -290,6 +390,7 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
                     'transition-[max-height] duration-200 disabled:cursor-not-allowed',
                   )}
                 />
+
                 <div className="flex flex-col items-start justify-start pt-1.5">
                   <CollapseChat
                     isCollapsed={isCollapsed}
@@ -299,34 +400,69 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
                 </div>
               </div>
             )}
-            <div
-              className={cn(
-                '@container items-between flex gap-2 pb-2',
-                isRTL ? 'flex-row-reverse' : 'flex-row',
-              )}
-            >
+
+            <div className={cn('@container items-between flex gap-2 pb-2', isRTL ? 'flex-row-reverse' : 'flex-row')}>
               <div className={`${isRTL ? 'mr-2' : 'ml-2'}`}>
                 <AttachFileChat conversation={conversation} disableInputs={disableInputs} />
               </div>
+
+              {/* Style toggle + slider */}
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-xs cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="h-3 w-3"
+                    checked={styleEnabled}
+                    disabled={disableInputs}
+                    onChange={(e) => setStyleEnabled(e.target.checked)}
+                  />
+                  <span>Style</span>
+                </label>
+
+                {styleEnabled && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-wide opacity-70">level</span>
+                    <input
+                      type="range"
+                      min={STYLE_MIN}
+                      max={STYLE_MAX}
+                      step={1}
+                      value={clampInt(styleLevel, STYLE_MIN, STYLE_MAX)}
+                      onChange={(e) =>
+                        setStyleLevel(clampInt(Number(e.target.value), STYLE_MIN, STYLE_MAX))
+                      }
+                      className="w-24"
+                      disabled={disableInputs}
+                      aria-label="Style level"
+                      title="0–5 = professional/structured, 6–9 = casual/simple"
+                    />
+                    <span className="text-[10px] tabular-nums opacity-80">
+                      {clampInt(styleLevel, STYLE_MIN, STYLE_MAX)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
               <BadgeRow
                 showEphemeralBadges={!isAgentsEndpoint(endpoint) && !isAssistantsEndpoint(endpoint)}
-                isSubmitting={isSubmitting || isSubmittingAdded}
+                isSubmitting={Boolean(isSubmitting || isSubmittingAdded)}
                 conversationId={conversationId}
                 onChange={setBadges}
-                isInChat={
-                  Array.isArray(conversation?.messages) && conversation.messages.length >= 1
-                }
+                isInChat={Array.isArray(conversation?.messages) && conversation.messages.length >= 1}
               />
+
               <div className="mx-auto flex" />
+
               {SpeechToText && (
                 <AudioRecorder
                   methods={methods}
                   ask={submitMessage}
                   textAreaRef={textAreaRef}
                   disabled={disableInputs || isNotAppendable}
-                  isSubmitting={isSubmitting}
+                  isSubmitting={Boolean(isSubmitting)}
                 />
               )}
+
               <div className={`${isRTL ? 'ml-2' : 'mr-2'}`}>
                 {(isSubmitting || isSubmittingAdded) && (showStopButton || showStopAdded) ? (
                   <StopButton stop={handleStopGenerating} setShowStopButton={setShowStopButton} />
@@ -341,6 +477,7 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
                 )}
               </div>
             </div>
+
             {TextToSpeech && automaticPlayback && <StreamAudio index={index} />}
           </div>
         </div>

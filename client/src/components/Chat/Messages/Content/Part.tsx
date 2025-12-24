@@ -19,6 +19,9 @@ import ToolCall from './ToolCall';
 import ImageGen from './ImageGen';
 import Image from './Image';
 
+// ✅ Strip hidden blocks (e.g. <!-- k9_style ... -->)
+import { stripK9Hidden } from '~/utils/k9Hidden';
+
 type PartProps = {
   part?: TMessageContentParts;
   isLast?: boolean;
@@ -35,18 +38,12 @@ const Part = memo(
     }
 
     if (part.type === ContentTypes.ERROR) {
-      return (
-        <ErrorMessage
-          text={
-            part[ContentTypes.ERROR] ??
-            (typeof part[ContentTypes.TEXT] === 'string'
-              ? part[ContentTypes.TEXT]
-              : part.text?.value) ??
-            ''
-          }
-          className="my-2"
-        />
-      );
+      const raw =
+        part[ContentTypes.ERROR] ??
+        (typeof part[ContentTypes.TEXT] === 'string' ? part[ContentTypes.TEXT] : part.text?.value) ??
+        '';
+
+      return <ErrorMessage text={stripK9Hidden(raw)} className="my-2" />;
     } else if (part.type === ContentTypes.AGENT_UPDATE) {
       return (
         <>
@@ -59,11 +56,14 @@ const Part = memo(
         </>
       );
     } else if (part.type === ContentTypes.TEXT) {
-      const text = typeof part.text === 'string' ? part.text : part.text?.value;
+      const rawText = typeof part.text === 'string' ? part.text : part.text?.value;
 
-      if (typeof text !== 'string') {
+      if (typeof rawText !== 'string') {
         return null;
       }
+
+      const text = stripK9Hidden(rawText);
+
       if (part.tool_call_ids != null && !text) {
         return null;
       }
@@ -77,10 +77,11 @@ const Part = memo(
         </Container>
       );
     } else if (part.type === ContentTypes.THINK) {
-      const reasoning = typeof part.think === 'string' ? part.think : part.think?.value;
-      if (typeof reasoning !== 'string') {
+      const rawReasoning = typeof part.think === 'string' ? part.think : part.think?.value;
+      if (typeof rawReasoning !== 'string') {
         return null;
       }
+      const reasoning = stripK9Hidden(rawReasoning);
       return <Reasoning reasoning={reasoning} isLast={isLast ?? false} />;
     } else if (part.type === ContentTypes.TOOL_CALL) {
       const toolCall = part[ContentTypes.TOOL_CALL];
@@ -127,11 +128,7 @@ const Part = memo(
         );
       } else if (isToolCall && toolCall.name?.startsWith(Constants.LC_TRANSFER_TO_)) {
         return (
-          <AgentHandoff
-            args={toolCall.args ?? ''}
-            name={toolCall.name || ''}
-            output={toolCall.output ?? ''}
-          />
+          <AgentHandoff args={toolCall.args ?? ''} name={toolCall.name || ''} output={toolCall.output ?? ''} />
         );
       } else if (isToolCall) {
         return (
