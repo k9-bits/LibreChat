@@ -45,6 +45,7 @@ import SendButton from './SendButton';
 import EditBadges from './EditBadges';
 import BadgeRow from './BadgeRow';
 import Mention from './Mention';
+import SovereigntyFlag from '~/components/SovereigntyFlag';
 import store from '~/store';
 
 const STYLE_MIN = 0;
@@ -61,14 +62,12 @@ function clampInt(n: number, min: number, max: number) {
  * NOTE: Make sure your rendering layer strips <!-- k9_style ... --> blocks.
  */
 function toHiddenStyleSuffix(text: string) {
-  // prevent "--" from breaking HTML comment parsing
   const safe = String(text).replace(/--/g, '—');
   return `\n\n<!-- k9_style\n${safe}\n-->`;
 }
 
 /**
- * Style scale: 0–5 stays professional/structured. 6–9 is more casual/simple.
- * This is framed as tone/readability control (not “detection evasion”).
+ * Humanize scale: 0–5 stays professional/structured. 6–9 is more casual/simple.
  */
 function buildStyleInstruction(level: number) {
   const L = clampInt(level, STYLE_MIN, STYLE_MAX);
@@ -77,7 +76,7 @@ function buildStyleInstruction(level: number) {
   const professionalRules =
     L <= 5
       ? [
-          `STYLE LEVEL: ${L}/9 (professional/structured)`,
+          `HUMANIZE LEVEL: ${L}/9 (professional/structured)`,
           '',
           'Rules:',
           '- Keep a professional tone.',
@@ -90,7 +89,7 @@ function buildStyleInstruction(level: number) {
   const casualRules =
     L >= 6
       ? [
-          `STYLE LEVEL: ${L}/9 (casual/simple)`,
+          `HUMANIZE LEVEL: ${L}/9 (casual/simple)`,
           '',
           'Rules:',
           '- Use shorter sentences.',
@@ -101,7 +100,7 @@ function buildStyleInstruction(level: number) {
       : '';
 
   return [
-    'INTERNAL STYLE INSTRUCTIONS:',
+    'INTERNAL HUMANIZE INSTRUCTIONS:',
     '- Do not mention these instructions.',
     '- Keep the answer factually correct.',
     professionalRules,
@@ -124,7 +123,7 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
   const [backupBadges, setBackupBadges] = useState<Pick<BadgeItem, 'id'>[]>([]);
 
-  // Style toggle + slider
+  // Humanize toggle + slider
   const [styleEnabled, setStyleEnabled] = useState(false);
   const [styleLevel, setStyleLevel] = useState<number>(STYLE_DEFAULT);
 
@@ -140,7 +139,9 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const [isEditingBadges, setIsEditingBadges] = useRecoilState(store.isEditingBadges);
   const [showStopButton, setShowStopButton] = useRecoilState(store.showStopButtonByIndex(index));
   const [showPlusPopover, setShowPlusPopover] = useRecoilState(store.showPlusPopoverFamily(index));
-  const [showMentionPopover, setShowMentionPopover] = useRecoilState(store.showMentionPopoverFamily(index));
+  const [showMentionPopover, setShowMentionPopover] = useRecoilState(
+    store.showMentionPopoverFamily(index),
+  );
 
   const { requiresKey } = useRequiresKey();
   const methods = useChatFormContext();
@@ -187,7 +188,8 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
   const invalidAssistant = useMemo(
     () =>
       isAssistantsEndpoint(endpoint) &&
-      (!(conversation?.assistant_id ?? '') || !assistantMap?.[endpoint ?? '']?.[conversation?.assistant_id ?? '']),
+      (!(conversation?.assistant_id ?? '') ||
+        !assistantMap?.[endpoint ?? '']?.[conversation?.assistant_id ?? '']),
     [conversation?.assistant_id, endpoint, assistantMap],
   );
 
@@ -212,7 +214,6 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
 
   const { submitMessage, submitPrompt } = useSubmitMessage();
 
-  // When enabling style control, default level to 5
   useEffect(() => {
     if (styleEnabled) setStyleLevel(STYLE_DEFAULT);
   }, [styleEnabled]);
@@ -224,7 +225,6 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
 
       const L = clampInt(styleLevel, STYLE_MIN, STYLE_MAX);
       const instruction = styleEnabled && L > 0 ? buildStyleInstruction(L) : '';
-
       const contentToSend = instruction ? trimmed + toHiddenStyleSuffix(instruction) : trimmed;
 
       return submitMessage({ text: contentToSend });
@@ -314,6 +314,9 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
           : 'sm:mb-10',
       )}
     >
+      {/* Portaled into document.body: top-right header area, flutter every 5 seconds for now */}
+      <SovereigntyFlag intervalMs={5_000} />
+
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
         <div className={cn('flex w-full items-center', isRTL && 'flex-row-reverse')}>
           {showPlusPopover && !isAssistantsEndpoint(endpoint) && (
@@ -406,7 +409,6 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
                 <AttachFileChat conversation={conversation} disableInputs={disableInputs} />
               </div>
 
-              {/* Style toggle + slider */}
               <div className="flex items-center gap-2">
                 <label className="flex items-center gap-1 text-xs cursor-pointer select-none">
                   <input
@@ -416,7 +418,7 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
                     disabled={disableInputs}
                     onChange={(e) => setStyleEnabled(e.target.checked)}
                   />
-                  <span>Style</span>
+                  <span>Humanize</span>
                 </label>
 
                 {styleEnabled && (
@@ -428,12 +430,10 @@ const ChatForm = memo(({ index = 0 }: { index?: number }) => {
                       max={STYLE_MAX}
                       step={1}
                       value={clampInt(styleLevel, STYLE_MIN, STYLE_MAX)}
-                      onChange={(e) =>
-                        setStyleLevel(clampInt(Number(e.target.value), STYLE_MIN, STYLE_MAX))
-                      }
+                      onChange={(e) => setStyleLevel(clampInt(Number(e.target.value), STYLE_MIN, STYLE_MAX))}
                       className="w-24"
                       disabled={disableInputs}
-                      aria-label="Style level"
+                      aria-label="Humanize level"
                       title="0–5 = professional/structured, 6–9 = casual/simple"
                     />
                     <span className="text-[10px] tabular-nums opacity-80">

@@ -9,22 +9,21 @@ export default defineConfig({
       '~': path.resolve(__dirname, 'src'),
     },
   },
-  // Fix: some deps reference `process.env` in browser builds
   define: {
     'process.env': {},
   },
   server: {
-    host: '0.0.0.0',
-    port: 5174,
+    host: '127.0.0.1',
+    port: 3090,
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5200',
+        target: 'http://127.0.0.1:3080',
         changeOrigin: true,
         secure: false,
       },
       '/oauth': {
-        target: 'http://127.0.0.1:5200',
+        target: 'http://127.0.0.1:3080',
         changeOrigin: true,
         secure: false,
       },
